@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDFラベルメーカー</title>
+<style>
+  /* ===== 全体 ===== */
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #d8dce3;
+    --text: #1f2430;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --error: #dc2626;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+  }
+
+  .lead {
+    margin: 0 0 20px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* ===== 2カラムレイアウト(左:設定 / 右:プレビュー) ===== */
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 24px;
+    align-items: start;
+    max-width: 1100px;
+  }
+
+  /* 画面が狭いときは1カラムに折り返す */
+  @media (max-width: 800px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  /* ===== 設定フォーム ===== */
+  fieldset {
+    margin: 0 0 16px;
+    padding: 0;
+    border: none;
+  }
+
+  legend {
+    padding: 0;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--muted);
+  }
+
+  /* 数値入力は2列で並べる */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 12px;
+  }
+
+  label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+
+  input[type="number"] {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 90px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+    line-height: 1.5;
+    resize: vertical;
+  }
+
+  input:focus, textarea:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    border-color: var(--accent);
+  }
+
+  /* ===== 面数の表示 ===== */
+  .summary {
+    padding: 10px 12px;
+    background: #eef2ff;
+    border-radius: 6px;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
+  .summary strong { font-size: 16px; }
+
+  /* 設定が不正なときのエラー表示 */
+  .summary.is-error {
+    background: #fef2f2;
+    color: var(--error);
+  }
+
+  button {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: bold;
+    cursor: pointer;
+  }
+
+  button:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+  }
+
+  .note {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ===== A4プレビュー ===== */
+  /* 用紙を表す枠。A4の縦横比(210:297)を保つ */
+  .preview {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    aspect-ratio: 210 / 297;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .12);
+    overflow: hidden;
+  }
+
+  /* 1枚のラベル。位置とサイズは用紙に対する%でJSから指定する */
+  .label {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #b9c0cc;
+    padding: 2px;
+    overflow: hidden;
+    text-align: center;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.3;
+  }
+
+  .preview-caption {
+    margin: 10px 0 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<h1>PDFラベルメーカー</h1>
+<p class="lead">テキストを入力し、A4のラベル用紙に合わせたPDFを生成します。</p>
+
+<div class="layout">
+
+  <!-- ===== 左: 設定パネル ===== -->
+  <div class="panel">
+    <fieldset>
+      <legend>用紙の余白 (mm)</legend>
+      <div class="grid-2">
+        <div>
+          <label for="marginTop">上</label>
+          <input type="number" id="marginTop" value="10" min="0" step="0.1">
+        </div>
+        <div>
+          <label for="marginBottom">下</label>
+          <input type="number" id="marginBottom" value="10" min="0" step="0.1">
+        </div>
+        <div>
+          <label for="marginLeft">左</label>
+          <input type="number" id="marginLeft" value="10" min="0" step="0.1">
+        </div>
+        <div>
+          <label for="marginRight">右</label>
+          <input type="number" id="marginRight" value="10" min="0" step="0.1">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>ラベルのサイズ (mm)</legend>
+      <div class="grid-2">
+        <div>
+          <label for="labelWidth">幅</label>
+          <input type="number" id="labelWidth" value="60" min="1" step="0.1">
+        </div>
+        <div>
+          <label for="labelHeight">高さ</label>
+          <input type="number" id="labelHeight" value="30" min="1" step="0.1">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>ラベル間の余白 (mm)</legend>
+      <div class="grid-2">
+        <div>
+          <label for="gapX">横</label>
+          <input type="number" id="gapX" value="5" min="0" step="0.1">
+        </div>
+        <div>
+          <label for="gapY">縦</label>
+          <input type="number" id="gapY" value="5" min="0" step="0.1">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>印字するテキスト</legend>
+      <textarea id="text" placeholder="ラベルに印字する文字を入力">サンプルラベル</textarea>
+      <div style="margin-top: 8px; width: 50%;">
+        <label for="fontSize">フォントサイズ (pt)</label>
+        <input type="number" id="fontSize" value="12" min="1" step="0.5">
+      </div>
+    </fieldset>
+
+    <!-- 現在の設定で何面になるかを表示する -->
+    <div class="summary" id="summary"></div>
+
+    <button id="generate" type="button">PDFを生成</button>
+    <p class="note">※ PDF生成は次のステップで実装します。現在はレイアウトの確認のみ行えます。</p>
+  </div>
+
+  <!-- ===== 右: A4プレビュー ===== -->
+  <div class="panel">
+    <div class="preview" id="preview"></div>
+    <p class="preview-caption">A4 (210mm × 297mm) のプレビュー</p>
+  </div>
+
+</div>
+
+<script>
+  // ===== 定数 =====
+  const PAPER_WIDTH = 210;   // A4の幅 (mm)
+  const PAPER_HEIGHT = 297;  // A4の高さ (mm)
+  const PT_TO_MM = 0.352778; // 1pt = 0.352778mm
+
+  // 設定値を読み取る入力欄のid一覧
+  const INPUT_IDS = [
+    'marginTop', 'marginBottom', 'marginLeft', 'marginRight',
+    'labelWidth', 'labelHeight', 'gapX', 'gapY', 'fontSize'
+  ];
+
+  const summaryEl = document.getElementById('summary');
+  const previewEl = document.getElementById('preview');
+  const textEl = document.getElementById('text');
+  const generateBtn = document.getElementById('generate');
+
+  /**
+   * 入力欄から現在の設定値を読み取る。
+   * 数値として解釈できない欄はNaNのまま返し、検証側で弾く。
+   */
+  function readSettings() {
+    const settings = {};
+    INPUT_IDS.forEach(function (id) {
+      settings[id] = parseFloat(document.getElementById(id).value);
+    });
+    settings.text = textEl.value;
+    return settings;
+  }
+
+  /**
+   * 用紙サイズ・余白・ラベルサイズから列数と行数を計算する。
+   * 用紙に1面も収まらない場合はエラーを返す。
+   */
+  function calcLayout(s) {
+    // 数値が入っていない、または負の値が入っている欄がないか確認する
+    const hasInvalidNumber = INPUT_IDS.some(function (id) {
+      return isNaN(s[id]) || s[id] < 0;
+    });
+    if (hasInvalidNumber) {
+      return { error: 'すべての項目に0以上の数値を入力してください。' };
+    }
+    if (s.labelWidth <= 0 || s.labelHeight <= 0 || s.fontSize <= 0) {
+      return { error: 'ラベルのサイズとフォントサイズは0より大きい値にしてください。' };
+    }
+
+    // 余白を除いた印字可能な領域
+    const usableWidth = PAPER_WIDTH - s.marginLeft - s.marginRight;
+    const usableHeight = PAPER_HEIGHT - s.marginTop - s.marginBottom;
+
+    // 最後の1面の後ろにはラベル間余白が付かないので、余白1つ分を足してから割る
+    const cols = Math.floor((usableWidth + s.gapX) / (s.labelWidth + s.gapX));
+    const rows = Math.floor((usableHeight + s.gapY) / (s.labelHeight + s.gapY));
+
+    if (cols < 1 || rows < 1) {
+      return { error: 'この設定ではラベルが用紙に収まりません。余白かラベルサイズを見直してください。' };
+    }
+    return { cols: cols, rows: rows };
+  }
+
+  /**
+   * 面数の表示を更新する。
+   * エラー時はメッセージを表示し、PDF生成ボタンを無効化する。
+   */
+  function renderSummary(layout) {
+    if (layout.error) {
+      summaryEl.classList.add('is-error');
+      summaryEl.textContent = layout.error;
+      generateBtn.disabled = true;
+      return;
+    }
+    summaryEl.classList.remove('is-error');
+    const total = layout.cols * layout.rows;
+    summaryEl.innerHTML = layout.cols + '列 × ' + layout.rows + '行 = <strong>' + total + '面</strong>';
+    generateBtn.disabled = false;
+  }
+
+  /**
+   * A4プレビューにラベルを並べる。
+   * 位置とサイズは用紙に対する%で指定するため、プレビューの表示幅が変わっても崩れない。
+   */
+  function renderPreview(s, layout) {
+    previewEl.innerHTML = '';
+    if (layout.error) return;
+
+    // ptで指定されたフォントサイズをmmに直し、プレビューの実表示幅に合わせてpxへ換算する
+    const previewWidthPx = previewEl.clientWidth;
+    const fontSizePx = (s.fontSize * PT_TO_MM) / PAPER_WIDTH * previewWidthPx;
+
+    // 1面ずつ生成するとDOM操作が増えるため、まとめて追加する
+    const fragment = document.createDocumentFragment();
+
+    for (let row = 0; row < layout.rows; row++) {
+      for (let col = 0; col < layout.cols; col++) {
+        const x = s.marginLeft + col * (s.labelWidth + s.gapX);
+        const y = s.marginTop + row * (s.labelHeight + s.gapY);
+
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.style.left = (x / PAPER_WIDTH * 100) + '%';
+        label.style.top = (y / PAPER_HEIGHT * 100) + '%';
+        label.style.width = (s.labelWidth / PAPER_WIDTH * 100) + '%';
+        label.style.height = (s.labelHeight / PAPER_HEIGHT * 100) + '%';
+        label.style.fontSize = fontSizePx + 'px';
+        label.textContent = s.text;
+
+        fragment.appendChild(label);
+      }
+    }
+    previewEl.appendChild(fragment);
+  }
+
+  /** 設定の読み取りから画面の更新までをまとめて行う */
+  function update() {
+    const settings = readSettings();
+    const layout = calcLayout(settings);
+    renderSummary(layout);
+    renderPreview(settings, layout);
+  }
+
+  // 入力のたびに再計算する
+  INPUT_IDS.forEach(function (id) {
+    document.getElementById(id).addEventListener('input', update);
+  });
+  textEl.addEventListener('input', update);
+
+  // プレビューの表示幅が変わるとフォントサイズの換算がずれるため、描き直す
+  window.addEventListener('resize', update);
+
+  // PDF生成は次のステップで実装する
+  generateBtn.addEventListener('click', function () {
+    alert('PDF生成は次のステップで実装します。');
+  });
+
+  // 初期表示
+  update();
+</script>
+
+</body>
+</html>
