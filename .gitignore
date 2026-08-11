@@ -21,3 +21,6 @@ build/
 *.log
 npm-debug.log*
 tmp/
+
+# Claude Code のローカル設定
+.claude/settings.local.json
