@@ -266,7 +266,6 @@
     <div class="summary" id="summary"></div>
 
     <button id="generate" type="button">PDFを生成</button>
-    <p class="note">※ PDF生成は次のステップで実装します。現在はレイアウトの確認のみ行えます。</p>
   </div>
 
   <!-- ===== 右: A4プレビュー ===== -->
@@ -277,11 +276,25 @@
 
 </div>
 
+<!-- PDF生成ライブラリ。バージョンを固定して読み込む -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
 <script>
   // ===== 定数 =====
   const PAPER_WIDTH = 210;   // A4の幅 (mm)
   const PAPER_HEIGHT = 297;  // A4の高さ (mm)
   const PT_TO_MM = 0.352778; // 1pt = 0.352778mm
+
+  // Canvasの解像度。画面の等倍(96dpi = 1mmあたり約3.78px)の4倍で描き、印刷時のぼやけを防ぐ
+  const CANVAS_SCALE = 4;
+  const CANVAS_PX_PER_MM = (96 / 25.4) * CANVAS_SCALE;
+
+  const LABEL_PADDING = 1;   // ラベルの内側の余白 (mm)。文字が枠線に接するのを防ぐ
+  const LINE_HEIGHT_RATIO = 1.3; // 行の高さ(フォントサイズに対する倍率)
+  const PDF_FILE_NAME = 'labels.pdf';
+
+  // Canvasに使うフォント。日本語が出るものを優先して指定する
+  const FONT_FAMILY = '"Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif';
 
   // 設定値を読み取る入力欄のid一覧
   const INPUT_IDS = [
@@ -406,10 +419,117 @@
   // プレビューの表示幅が変わるとフォントサイズの換算がずれるため、描き直す
   window.addEventListener('resize', update);
 
-  // PDF生成は次のステップで実装する
-  generateBtn.addEventListener('click', function () {
-    alert('PDF生成は次のステップで実装します。');
-  });
+  // ===== PDF生成 =====
+
+  /**
+   * 1行の文字列を指定幅で折り返し、行の配列にして返す。
+   * 日本語は単語の区切りに空白がないため、1文字ずつ幅を測って折り返す。
+   */
+  function wrapLine(ctx, line, maxWidth) {
+    if (line === '') return [''];
+
+    const wrapped = [];
+    let current = '';
+
+    // 配列に展開してから回すことで、絵文字などの複数コード単位の文字も分割されない
+    Array.from(line).forEach(function (char) {
+      const candidate = current + char;
+      if (current !== '' && ctx.measureText(candidate).width > maxWidth) {
+        wrapped.push(current);
+        current = char;
+      } else {
+        current = candidate;
+      }
+    });
+    wrapped.push(current);
+    return wrapped;
+  }
+
+  /**
+   * ラベル1枚分のテキストをCanvasに描画し、PNGのデータURLとして返す。
+   * jsPDFの標準フォントは日本語を描画できないため、テキストは画像にしてPDFへ貼り付ける。
+   * すべてのラベルは同じ内容なので、1枚だけ作って使い回す。
+   */
+  function createLabelImage(s) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(s.labelWidth * CANVAS_PX_PER_MM);
+    canvas.height = Math.round(s.labelHeight * CANVAS_PX_PER_MM);
+
+    const ctx = canvas.getContext('2d');
+    const fontSizePx = s.fontSize * PT_TO_MM * CANVAS_PX_PER_MM;
+
+    // 幅の計測にフォント設定が必要なため、折り返しの前に指定する
+    ctx.font = fontSizePx + 'px ' + FONT_FAMILY;
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const paddingPx = LABEL_PADDING * CANVAS_PX_PER_MM;
+    const maxWidth = canvas.width - paddingPx * 2;
+    const maxHeight = canvas.height - paddingPx * 2;
+    const lineHeight = fontSizePx * LINE_HEIGHT_RATIO;
+
+    // 入力の改行で分けたうえで、幅に収まらない行をさらに折り返す
+    let lines = [];
+    s.text.split('\n').forEach(function (paragraph) {
+      lines = lines.concat(wrapLine(ctx, paragraph, maxWidth));
+    });
+
+    // 高さに収まらない行は切り捨てる
+    const maxLines = Math.max(1, Math.floor(maxHeight / lineHeight));
+    if (lines.length > maxLines) {
+      lines = lines.slice(0, maxLines);
+    }
+
+    // ラベルの中央に来るよう、全体の高さから描き始めの位置を求める
+    let y = canvas.height / 2 - (lines.length * lineHeight) / 2 + lineHeight / 2;
+    lines.forEach(function (line) {
+      ctx.fillText(line, canvas.width / 2, y);
+      y += lineHeight;
+    });
+
+    // 背景は透明のままにして、PDF側で描く枠線が隠れないようにする
+    return canvas.toDataURL('image/png');
+  }
+
+  /** 現在の設定でPDFを生成し、ダウンロードさせる */
+  function generatePDF() {
+    // CDNの読み込みに失敗している場合はここで止める
+    if (!window.jspdf) {
+      alert('PDFライブラリの読み込みに失敗しました。ネットワーク接続を確認してください。');
+      return;
+    }
+
+    const s = readSettings();
+    const layout = calcLayout(s);
+    if (layout.error) return;
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+
+    // ラベルの外枠(印刷位置の確認用)
+    doc.setDrawColor(150);
+    doc.setLineWidth(0.1);
+
+    // テキストが空のときは枠線だけのPDFにする
+    const image = s.text.trim() === '' ? null : createLabelImage(s);
+
+    for (let row = 0; row < layout.rows; row++) {
+      for (let col = 0; col < layout.cols; col++) {
+        const x = s.marginLeft + col * (s.labelWidth + s.gapX);
+        const y = s.marginTop + row * (s.labelHeight + s.gapY);
+
+        doc.rect(x, y, s.labelWidth, s.labelHeight);
+        if (image) {
+          doc.addImage(image, 'PNG', x, y, s.labelWidth, s.labelHeight);
+        }
+      }
+    }
+
+    doc.save(PDF_FILE_NAME);
+  }
+
+  generateBtn.addEventListener('click', generatePDF);
 
   // 初期表示
   update();
